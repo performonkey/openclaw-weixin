@@ -70,7 +70,7 @@ jobs:
             
             # Commit each version individually
             git add .
-            git commit -m \"$VERSION\" || echo \"No changes for $VERSION\"
+            git commit -m $VERSION || echo \"No changes for $VERSION\"
           done
 
           git push

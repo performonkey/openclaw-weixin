@@ -1,0 +1,76 @@
+name: Sync with NPM
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-and-sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Sync versions from NPM
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          
+          # Get all versions from NPM and find those newer than current
+          VERSIONS=$(npm view $PACKAGE_NAME versions --json | node -e "
+            const versions = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
+            const semver = (v) => v.split('.').map(v => parseInt(v.replace(/[^0-9]/g, '')) || 0);
+            const compare = (v1, v2) => {
+              const a = semver(v1);
+              const b = semver(v2);
+              for (let i = 0; i < Math.max(a.length, b.length); i++) {
+                const aVal = a[i] || 0;
+                const bVal = b[i] || 0;
+                if (aVal > bVal) return 1;
+                if (aVal < bVal) return -1;
+              }
+              return 0;
+            };
+            const current = '$CURRENT_VERSION';
+            const updates = versions.filter(v => compare(v, current) > 0).sort(compare);
+            process.stdout.write(updates.join('\n'));
+          ")
+
+          if [ -z "$VERSIONS" ]; then
+            echo "No updates found."
+            exit 0
+          fi
+
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          for VERSION in $VERSIONS; do
+            echo "Syncing version $VERSION..."
+            
+            mkdir -p tmp_sync
+            cd tmp_sync
+            npm pack $PACKAGE_NAME@$VERSION
+            tar -xzf *.tgz
+            
+            # Sync content and cleanup
+            cp -R package/* ../
+            cd ../
+            rm -rf tmp_sync
+            
+            # Commit each version individually
+            git add .
+            git commit -m \"$VERSION\" || echo \"No changes for $VERSION\"
+          done
+
+          git push
